@@ -2,6 +2,7 @@ from flask import Flask, Response
 import requests
 import re
 import time
+import threading
 
 app = Flask(__name__)
 
@@ -10,110 +11,110 @@ PLAYER_URL = (
     "07679d068d54d4a6b52e3a42e27aa151d502b09a"
 )
 
-CACHE_SECONDS = 60
+REFRESH_SECONDS = 300
 
-cached_url = None
-cached_at = 0
+current_url = None
+last_refresh = 0
+lock = threading.Lock()
 
 
-def get_wapa_url():
-    global cached_url, cached_at
-
-    now = time.time()
-
-    # Reuse the current URL briefly instead of requesting Field59
-    # for every IPTV player request.
-    if cached_url and now - cached_at < CACHE_SECONDS:
-        return cached_url
+def fetch_wapa_url():
+    global current_url, last_refresh
 
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Linux; Android 13) "
-            "AppleWebKit/537.36 Chrome/140 Safari/537.36"
+            "AppleWebKit/537.36 "
+            "Chrome/140 Safari/537.36"
         ),
         "Referer": "https://wapa.tv/envivo",
     }
 
-    r = requests.get(
+    response = requests.get(
         PLAYER_URL,
         headers=headers,
         timeout=15
     )
-    r.raise_for_status()
 
-    # The Field59 configuration contains:
-    # "m3u8":"https://live.field59.com/..."
+    response.raise_for_status()
+
     match = re.search(
         r'"m3u8"\s*:\s*"([^"]+\.m3u8)"',
-        r.text
+        response.text
     )
 
     if not match:
-        # Some versions may expose it as "url" instead.
         match = re.search(
             r'"url"\s*:\s*"([^"]+\.m3u8)"',
-            r.text
+            response.text
         )
 
     if not match:
         raise RuntimeError(
-            "Could not find WAPA M3U8 in Field59 response"
+            "No WAPA M3U8 was found in Field59 response"
         )
 
-    url = match.group(1)
+    with lock:
+        current_url = match.group(1)
+        last_refresh = time.time()
 
-    cached_url = url
-    cached_at = now
+    print("Updated WAPA URL:")
+    print(current_url)
 
-    return url
+    return current_url
+
+
+def refresh_loop():
+    while True:
+        try:
+            fetch_wapa_url()
+        except Exception as e:
+            print("Refresh error:", e)
+
+        time.sleep(REFRESH_SECONDS)
 
 
 @app.route("/")
 def home():
-    return "WAPA stream updater is running."
+    return "WAPA updater is running."
 
 
 @app.route("/wapa.m3u8")
-def wapa():
+def playlist():
+
+    global current_url
 
     try:
-        url = get_wapa_url()
+        # Get a URL immediately if we don't have one yet.
+        if current_url is None:
+            fetch_wapa_url()
 
-        # Redirect the IPTV player to the currently valid
-        # Field59 playlist.
         return Response(
             "#EXTM3U\n"
-            f"#EXTINF:-1,WAPA-TV\n"
-            f"{url}\n",
+            "#EXTINF:-1,WAPA-TV\n"
+            f"{current_url}\n",
             mimetype="application/x-mpegURL"
         )
 
     except Exception as e:
         return Response(
             "#EXTM3U\n"
-            f"# WAPA updater error: {e}\n",
+            f"# ERROR: {e}\n",
             status=503,
             mimetype="application/x-mpegURL"
         )
 
 
-@app.route("/stream")
-def stream():
-
-    try:
-        return Response(
-            get_wapa_url(),
-            mimetype="text/plain"
-        )
-
-    except Exception as e:
-        return Response(
-            str(e),
-            status=503
-        )
-
-
 if __name__ == "__main__":
+
+    # Start automatic background updater.
+    thread = threading.Thread(
+        target=refresh_loop,
+        daemon=True
+    )
+
+    thread.start()
+
     app.run(
         host="0.0.0.0",
         port=8080
