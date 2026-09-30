@@ -10,7 +10,7 @@ PLAYER_URL = (
 )
 
 
-def get_wapa_url():
+def get_wapa_url(feed):
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Linux; Android 13) "
@@ -28,22 +28,19 @@ def get_wapa_url():
 
     response.raise_for_status()
 
-    # Find the current Field59 M3U8
-    match = re.search(
-        r'"m3u8"\s*:\s*"([^"]+\.m3u8)"',
-        response.text
+    # Find an M3U8 containing the requested feed.
+    pattern = (
+        r'"(?:m3u8|url)"\s*:\s*"'
+        r'(https://live\.field59\.com/[^"]*/wapa/'
+        + re.escape(feed)
+        + r'/playlist\.m3u8)"'
     )
 
-    # Backup: look for "url"
-    if not match:
-        match = re.search(
-            r'"url"\s*:\s*"([^"]+\.m3u8)"',
-            response.text
-        )
+    match = re.search(pattern, response.text)
 
     if not match:
         raise RuntimeError(
-            "Could not find a WAPA M3U8 URL."
+            f"Could not find {feed} in Field59 response."
         )
 
     return match.group(1)
@@ -55,23 +52,25 @@ def home():
 
 
 @app.route("/wapa.m3u8")
-def wapa():
-
+def wapa41():
     try:
-        # Get the newest signed Field59 URL
-        current_url = get_wapa_url()
-
-        # Redirect directly to it
         return redirect(
-            current_url,
+            get_wapa_url("wapa1"),
             code=302
         )
-
     except Exception as e:
-        return (
-            f"WAPA updater error: {e}",
-            503
+        return f"WAPA 4.1 updater error: {e}", 503
+
+
+@app.route("/wapa42.m3u8")
+def wapa42():
+    try:
+        return redirect(
+            get_wapa_url("wapa2"),
+            code=302
         )
+    except Exception as e:
+        return f"WAPA 4.2 updater error: {e}", 503
 
 
 if __name__ == "__main__":
