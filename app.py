@@ -1,8 +1,6 @@
-from flask import Flask, Response
+from flask import Flask, redirect
 import requests
 import re
-import time
-import threading
 
 app = Flask(__name__)
 
@@ -11,16 +9,8 @@ PLAYER_URL = (
     "07679d068d54d4a6b52e3a42e27aa151d502b09a"
 )
 
-REFRESH_SECONDS = 300
 
-current_url = None
-last_refresh = 0
-lock = threading.Lock()
-
-
-def fetch_wapa_url():
-    global current_url, last_refresh
-
+def get_wapa_url():
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Linux; Android 13) "
@@ -38,11 +28,13 @@ def fetch_wapa_url():
 
     response.raise_for_status()
 
+    # Find the current Field59 M3U8
     match = re.search(
         r'"m3u8"\s*:\s*"([^"]+\.m3u8)"',
         response.text
     )
 
+    # Backup: look for "url"
     if not match:
         match = re.search(
             r'"url"\s*:\s*"([^"]+\.m3u8)"',
@@ -51,27 +43,10 @@ def fetch_wapa_url():
 
     if not match:
         raise RuntimeError(
-            "No WAPA M3U8 was found in Field59 response"
+            "Could not find a WAPA M3U8 URL."
         )
 
-    with lock:
-        current_url = match.group(1)
-        last_refresh = time.time()
-
-    print("Updated WAPA URL:")
-    print(current_url)
-
-    return current_url
-
-
-def refresh_loop():
-    while True:
-        try:
-            fetch_wapa_url()
-        except Exception as e:
-            print("Refresh error:", e)
-
-        time.sleep(REFRESH_SECONDS)
+    return match.group(1)
 
 
 @app.route("/")
@@ -80,41 +55,26 @@ def home():
 
 
 @app.route("/wapa.m3u8")
-def playlist():
-
-    global current_url
+def wapa():
 
     try:
-        # Get a URL immediately if we don't have one yet.
-        if current_url is None:
-            fetch_wapa_url()
+        # Get the newest signed Field59 URL
+        current_url = get_wapa_url()
 
-        return Response(
-            "#EXTM3U\n"
-            "#EXTINF:-1,WAPA-TV\n"
-            f"{current_url}\n",
-            mimetype="application/x-mpegURL"
+        # Redirect directly to it
+        return redirect(
+            current_url,
+            code=302
         )
 
     except Exception as e:
-        return Response(
-            "#EXTM3U\n"
-            f"# ERROR: {e}\n",
-            status=503,
-            mimetype="application/x-mpegURL"
+        return (
+            f"WAPA updater error: {e}",
+            503
         )
 
 
 if __name__ == "__main__":
-
-    # Start automatic background updater.
-    thread = threading.Thread(
-        target=refresh_loop,
-        daemon=True
-    )
-
-    thread.start()
-
     app.run(
         host="0.0.0.0",
         port=8080
