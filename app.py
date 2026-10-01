@@ -1,80 +1,89 @@
 from flask import Flask, redirect
 import requests
 import re
+from datetime import datetime, timezone
 
 app = Flask(__name__)
 
-PLAYER_URL_41 = (
-    "https://player.field59.com/v4/channel/wapa/"
-    "07679d068d54d4a6b52e3a42e27aa151d502b09a"
+SCHEDULE_URL = (
+    "https://player.field59.com/v4/schedule/wapa/"
+    "9f91970fb55d5a5b1b18adeaf20fb8fd3f33e565"
 )
 
-PLAYER_URL_42 = (
-    "https://player.field59.com/v4/channel/wapa/"
-    "d80b343a9963f0ea3c810ddda1be9731237cc082"
-)
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Linux; Android 13) "
+        "AppleWebKit/537.36 "
+        "Chrome/140 Safari/537.36"
+    ),
+    "Referer": "https://wapa.tv/envivo",
+}
 
 
-def get_wapa_url(player_url, feed):
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Linux; Android 13) "
-            "AppleWebKit/537.36 "
-            "Chrome/140 Safari/537.36"
-        ),
-        "Referer": "https://wapa.tv/envivo/",
-    }
-
+def get_schedule():
     response = requests.get(
-        player_url,
-        headers=headers,
+        SCHEDULE_URL,
+        headers=HEADERS,
         timeout=15
     )
-
     response.raise_for_status()
+    return response.text
 
-    pattern = (
-        r'"(?:m3u8|url)"\s*:\s*"'
-        r'(https://live\.field59\.com/[^"]*/wapa/'
-        + re.escape(feed)
-        + r'/playlist\.m3u8)"'
+
+def get_current_wapa_url():
+    xml = get_schedule()
+
+    now = datetime.now(timezone.utc)
+
+    instances = re.findall(
+        r"<instance>.*?"
+        r"<url>\s*<!\[CDATA\[(.*?)\]\]>\s*</url>.*?"
+        r"<begin>\s*<!\[CDATA\[(.*?)\]\]>\s*</begin>.*?"
+        r"<end>\s*<!\[CDATA\[(.*?)\]\]>\s*</end>.*?"
+        r"</instance>",
+        xml,
+        re.DOTALL
     )
 
-    match = re.search(pattern, response.text)
+    for url, begin, end in instances:
 
-    if not match:
-        raise RuntimeError(
-            f"Could not find {feed} in Field59 response."
-        )
+        begin_dt = datetime.strptime(
+            begin.strip(),
+            "%Y-%m-%d %H:%M"
+        ).replace(tzinfo=timezone.utc)
 
-    return match.group(1)
+        end_dt = datetime.strptime(
+            end.strip(),
+            "%Y-%m-%d %H:%M"
+        ).replace(tzinfo=timezone.utc)
+
+        if begin_dt <= now < end_dt:
+            return url.strip()
+
+    return None
 
 
 @app.route("/")
 def home():
-    return "WAPA updater is running."
+    return "WAPA 4.1 updater is running."
 
 
 @app.route("/WAPA-TV-4-1.m3u8")
-def wapa41():
-    try:
-        return redirect(
-            get_wapa_url(PLAYER_URL_41, "wapa1"),
-            code=302
-        )
-    except Exception as e:
-        return f"WAPA 4.1 updater error: {e}", 503
+def wapa():
 
-
-@app.route("/WAPA-TV-4-2.m3u8")
-def wapa42():
     try:
-        return redirect(
-            get_wapa_url(PLAYER_URL_42, "wapa2"),
-            code=302
-        )
+        current_url = get_current_wapa_url()
+
+        if not current_url:
+            return (
+                "WAPA 4.1 is currently between scheduled live events.",
+                503
+            )
+
+        return redirect(current_url, code=302)
+
     except Exception as e:
-        return f"WAPA 4.2 updater error: {e}", 503
+        return f"WAPA updater error: {e}", 503
 
 
 if __name__ == "__main__":
