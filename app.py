@@ -1,13 +1,8 @@
-from flask import Flask
+from flask import Flask, redirect
 import requests
 import re
 
 app = Flask(__name__)
-
-PLAYER_URL = (
-    "https://player.field59.com/v4/channel/wapa/"
-    "07679d068d54d4a6b52e3a42e27aa151d502b09a"
-)
 
 SCHEDULE_URL = (
     "https://player.field59.com/v4/schedule/wapa/"
@@ -24,33 +19,7 @@ HEADERS = {
 }
 
 
-def get_player_url():
-    response = requests.get(
-        PLAYER_URL,
-        headers=HEADERS,
-        timeout=15
-    )
-
-    response.raise_for_status()
-
-    match = re.search(
-        r'"m3u8"\s*:\s*"([^"]+\.m3u8)"',
-        response.text
-    )
-
-    if not match:
-        match = re.search(
-            r'"url"\s*:\s*"([^"]+\.m3u8)"',
-            response.text
-        )
-
-    if match:
-        return match.group(1)
-
-    return None
-
-
-def get_schedule_urls():
+def get_schedule():
     response = requests.get(
         SCHEDULE_URL,
         headers=HEADERS,
@@ -59,13 +28,44 @@ def get_schedule_urls():
 
     response.raise_for_status()
 
+    return response.text
+
+
+def get_streams():
+    xml = get_schedule()
+
     urls = re.findall(
         r"<url>\s*<!\[CDATA\[(.*?)\]\]>\s*</url>",
-        response.text,
+        xml,
         re.DOTALL
     )
 
-    return [url.strip() for url in urls]
+    # Only WAPA 4.1 streams
+    streams = []
+
+    for url in urls:
+        url = url.strip()
+
+        if "/wapa/wapa1/" in url:
+            streams.append(url)
+
+    return streams
+
+
+def test_stream(url):
+    try:
+        response = requests.get(
+            url,
+            headers=HEADERS,
+            timeout=10,
+            allow_redirects=False,
+            stream=True
+        )
+
+        return response.status_code
+
+    except Exception:
+        return None
 
 
 @app.route("/")
@@ -77,37 +77,36 @@ def home():
 def wapa():
 
     try:
-        # Get the current M3U8 URL from the Field59 player.
-        player_url = get_player_url()
+        streams = get_streams()
 
-        if not player_url:
+        if not streams:
             return (
-                "Field59 player returned no M3U8 URL.",
+                "No WAPA 4.1 streams were found in the schedule.",
                 503
             )
 
-        # Test the URL without following redirects.
-        response = requests.get(
-            player_url,
-            headers=HEADERS,
-            timeout=10,
-            allow_redirects=False
-        )
+        results = []
+
+        for url in streams:
+
+            status = test_stream(url)
+
+            results.append(
+                f"{status} - {url}"
+            )
+
+            if status == 200:
+                return redirect(url, code=302)
 
         return (
-            f"URL:\n"
-            f"{player_url}\n\n"
-            f"HTTP status: {response.status_code}\n\n"
-            f"Headers:\n"
-            f"{dict(response.headers)}\n\n"
-            f"Body:\n"
-            f"{response.text[:1000]}",
-            response.status_code
+            "No working WAPA 4.1 stream found.\n\n"
+            + "\n".join(results),
+            503
         )
 
     except Exception as e:
         return (
-            f"ERROR:\n{e}",
+            f"WAPA updater error:\n{e}",
             503
         )
 
