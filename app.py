@@ -1,7 +1,6 @@
 from flask import Flask, redirect
 import requests
 import re
-from datetime import datetime, timezone
 
 app = Flask(__name__)
 
@@ -23,6 +22,21 @@ HEADERS = {
     ),
     "Referer": "https://wapa.tv/envivo",
 }
+
+
+def test_stream(url):
+    try:
+        r = requests.get(
+            url,
+            headers=HEADERS,
+            timeout=10,
+            stream=True
+        )
+
+        return r.status_code == 200
+
+    except Exception:
+        return False
 
 
 def get_player_url():
@@ -50,7 +64,7 @@ def get_player_url():
     return None
 
 
-def get_scheduled_url():
+def get_schedule_urls():
     response = requests.get(
         SCHEDULE_URL,
         headers=HEADERS,
@@ -58,34 +72,13 @@ def get_scheduled_url():
     )
     response.raise_for_status()
 
-    xml = response.text
-    now = datetime.now(timezone.utc)
-
-    instances = re.findall(
-        r"<instance>.*?"
-        r"<url>\s*<!\[CDATA\[(.*?)\]\]>\s*</url>.*?"
-        r"<begin>\s*<!\[CDATA\[(.*?)\]\]>\s*</begin>.*?"
-        r"<end>\s*<!\[CDATA\[(.*?)\]\]>\s*</end>.*?"
-        r"</instance>",
-        xml,
+    urls = re.findall(
+        r"<url>\s*<!\[CDATA\[(.*?)\]\]>\s*</url>",
+        response.text,
         re.DOTALL
     )
 
-    for url, begin, end in instances:
-        begin_dt = datetime.strptime(
-            begin.strip(),
-            "%Y-%m-%d %H:%M"
-        ).replace(tzinfo=timezone.utc)
-
-        end_dt = datetime.strptime(
-            end.strip(),
-            "%Y-%m-%d %H:%M"
-        ).replace(tzinfo=timezone.utc)
-
-        if begin_dt <= now < end_dt:
-            return url.strip()
-
-    return None
+    return [url.strip() for url in urls]
 
 
 @app.route("/")
@@ -95,20 +88,25 @@ def home():
 
 @app.route("/WAPA-TV-4-1.m3u8")
 def wapa():
+
     try:
-        # First try the live Field59 channel player.
+        # Try the channel player URL.
         player_url = get_player_url()
 
-        if player_url:
+        if player_url and test_stream(player_url):
             return redirect(player_url, code=302)
 
-        # If that doesn't provide a stream, try the schedule.
-        scheduled_url = get_scheduled_url()
+        # Try URLs listed in the WAPA schedule.
+        schedule_urls = get_schedule_urls()
 
-        if scheduled_url:
-            return redirect(scheduled_url, code=302)
+        for url in schedule_urls:
+            if "/wapa/wapa1/" in url and test_stream(url):
+                return redirect(url, code=302)
 
-        return "No WAPA 4.1 stream is currently available.", 503
+        return (
+            "WAPA 4.1: no currently valid stream was found.",
+            503
+        )
 
     except Exception as e:
         return f"WAPA updater error: {e}", 503
