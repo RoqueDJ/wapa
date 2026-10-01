@@ -16,257 +16,162 @@ HEADERS = {
 }
 
 
-def scrape_wapa_page():
+def deep_inspect_field59_config():
     """
-    Step 1: Scrape https://wapa.tv/envivo
-    Extract ALL Field59 player/channel/schedule references and embedded configurations
+    Deep inspection of Field59 channel configuration
+    Print COMPLETE raw response and all relevant fields
     """
-    print("\n=== STEP 1: Scraping wapa.tv/envivo ===")
-    candidates = {
-        "field59_players": [],
-        "field59_channels": [],
-        "embedded_urls": [],
-        "script_configs": []
-    }
+    print("\n" + "="*70)
+    print("DEEP FIELD59 CONFIGURATION INSPECTION")
+    print("="*70)
+    
+    field59_url = "https://player.field59.com/v4/channel/wapa/07679d068d54d4a6b52e3a42e27aa151d502b09a"
+    
+    print(f"\nFetching: {field59_url}\n")
     
     try:
         response = requests.get(
-            "https://wapa.tv/envivo",
-            headers=HEADERS,
-            timeout=15
-        )
-        response.raise_for_status()
-        
-        # Find all Field59 player references
-        player_matches = re.findall(
-            r'player\.field59\.com/v4/channel/([^/\s"\'<>]+)/([^/\s"\'<>]+)',
-            response.text
-        )
-        if player_matches:
-            for channel, channel_id in player_matches:
-                ref = f"player.field59.com/v4/channel/{channel}/{channel_id}"
-                print(f"  Found Field59 player: {ref}")
-                candidates["field59_players"].append(ref)
-        
-        # Find any live.field59.com URLs
-        field59_live = re.findall(
-            r'https://live\.field59\.com/[^\s"\'<>]+',
-            response.text
-        )
-        for url in field59_live:
-            print(f"  Found live.field59.com URL: {url}")
-            candidates["embedded_urls"].append(url)
-        
-        # Extract script contents for deeper inspection
-        soup = BeautifulSoup(response.text, 'html.parser')
-        scripts = soup.find_all('script')
-        
-        for idx, script in enumerate(scripts):
-            if script.string:
-                script_text = script.string
-                
-                # Look for any URLs in scripts
-                urls_in_script = re.findall(r'https://[^\s"\'<>]+', script_text)
-                
-                if urls_in_script:
-                    for url in urls_in_script:
-                        if 'field59' in url or 'wapa' in url or 'm3u8' in url or 'live' in url:
-                            print(f"  Found URL in script[{idx}]: {url}")
-                            candidates["script_configs"].append(url)
-        
-        print(f"  Total candidates found: {len(candidates['field59_players']) + len(candidates['embedded_urls']) + len(candidates['script_configs'])}")
-        return candidates
-        
-    except Exception as e:
-        print(f"  ERROR scraping wapa.tv/envivo: {e}")
-        return candidates
-
-
-def fetch_field59_config(player_ref):
-    """
-    Step 2: Fetch Field59 channel configuration
-    Recursively inspect the JSON for all potential stream sources
-    """
-    print(f"\n=== STEP 2: Fetching Field59 config: {player_ref} ===")
-    
-    try:
-        url = f"https://{player_ref}"
-        response = requests.get(
-            url,
+            field59_url,
             headers=HEADERS,
             timeout=15,
             allow_redirects=True
         )
         
-        print(f"  HTTP Status: {response.status_code}")
+        print(f"HTTP Status: {response.status_code}")
+        print(f"Content-Type: {response.headers.get('content-type', 'N/A')}")
+        print(f"Content-Length: {len(response.text)} bytes")
         
-        found_urls = set()
+        # Print complete raw response
+        print("\n" + "="*70)
+        print("COMPLETE RAW RESPONSE:")
+        print("="*70)
+        print(response.text[:5000])  # First 5000 chars
+        if len(response.text) > 5000:
+            print(f"\n... (response continues, total {len(response.text)} chars)")
+            print("\n... LAST 2000 CHARS:")
+            print(response.text[-2000:])
         
-        # Try to parse as JSON
+        # Attempt to parse as JSON
+        print("\n" + "="*70)
+        print("PARSED JSON STRUCTURE:")
+        print("="*70)
+        
         try:
             data = response.json()
-            print(f"  Response is JSON (keys: {list(data.keys())[:10]}...)")
+            print(json.dumps(data, indent=2))
             
-            # Recursively search for URLs in the JSON
-            def extract_urls_from_json(obj, path=""):
-                urls = set()
+            # Now search for all relevant fields
+            print("\n" + "="*70)
+            print("RELEVANT FIELDS FOUND:")
+            print("="*70)
+            
+            search_fields = [
+                'clip', 'm3u8', 'url', 'stream', 'source', 'live', 
+                'media', 'playlist', 'dockey', 'schedule', 'sharing', 
+                'video', 'channel', 'event', 'broadcast', 'feed',
+                'hls', 'dash', 'manifest', 'uri', 'href', 'path',
+                'content', 'assets', 'provider', 'token', 'id'
+            ]
+            
+            def search_json_recursive(obj, depth=0, parent_key=""):
+                """Recursively search JSON for relevant fields"""
+                indent = "  " * depth
+                
                 if isinstance(obj, dict):
                     for key, value in obj.items():
-                        if key in ['url', 'playlist', 'stream', 'live', 'media', 'source', 'video', 'channel', 'href', 'src', 'uri']:
-                            if isinstance(value, str) and ('http' in value or 'm3u8' in value or 'field59' in value):
-                                print(f"    Found in JSON[{key}]: {value}")
-                                urls.add(value)
-                        urls.update(extract_urls_from_json(value, f"{path}.{key}"))
+                        # Check if this key is relevant
+                        if any(search_term in key.lower() for search_term in search_fields):
+                            print(f"{indent}[{key}] = {str(value)[:200]}")
+                            if len(str(value)) > 200:
+                                print(f"{indent}  ... (truncated)")
+                        
+                        # Recurse into the value
+                        search_json_recursive(value, depth + 1, key)
+                
                 elif isinstance(obj, list):
                     for idx, item in enumerate(obj):
-                        urls.update(extract_urls_from_json(item, f"{path}[{idx}]"))
-                return urls
+                        if isinstance(item, (dict, list)):
+                            print(f"{indent}[{idx}]:")
+                            search_json_recursive(item, depth + 1, f"{parent_key}[{idx}]")
             
-            found_urls.update(extract_urls_from_json(data))
-        
-        except json.JSONDecodeError:
-            print(f"  Response is not JSON, searching text for URLs...")
-            # Fall back to regex search
-            urls_found = re.findall(r'https://[^\s"\'<>]+', response.text)
-            for url in urls_found:
-                if 'field59' in url or 'wapa' in url or 'm3u8' in url or 'live' in url:
-                    print(f"    Found URL: {url}")
-                    found_urls.add(url)
-        
-        return found_urls
-        
-    except Exception as e:
-        print(f"  ERROR fetching Field59 config: {e}")
-        return set()
-
-
-def check_url_status(url):
-    """
-    Step 3: Check HTTP status of a URL
-    Note which ones are accessible vs. 403 (event-gated)
-    """
-    print(f"\n  Checking: {url}")
-    
-    try:
-        response = requests.head(
-            url,
-            headers=HEADERS,
-            timeout=10,
-            allow_redirects=True
-        )
-        
-        status = response.status_code
-        reason = ""
-        
-        if status == 200:
-            reason = "✓ ACCESSIBLE"
-        elif status == 403:
-            reason = "✗ FORBIDDEN (event-gated?)"
-        elif status == 404:
-            reason = "✗ NOT FOUND"
-        elif status in [301, 302, 307, 308]:
-            reason = f"→ REDIRECT ({status})"
-        else:
-            reason = f"? {status}"
-        
-        print(f"    Status: {status} {reason}")
-        
-        # Check if it's a token-based URL
-        is_token_url = '/t/' in url and '/wapa/' in url
-        if is_token_url:
-            print(f"    ⚠ Token-based URL detected (event-specific)")
-        
-        return {
-            "url": url,
-            "status": status,
-            "accessible": status == 200,
-            "is_token_url": is_token_url
-        }
-        
-    except Exception as e:
-        print(f"    ERROR: {e}")
-        return {
-            "url": url,
-            "status": None,
-            "accessible": False,
-            "error": str(e)
-        }
-
-
-def run_investigation():
-    """
-    Full investigation pipeline
-    """
-    print("\n" + "="*70)
-    print("WAPA/Field59 STREAM INVESTIGATION")
-    print("="*70)
-    
-    results = {
-        "wapa_page_findings": {},
-        "field59_configs": {},
-        "url_status_checks": [],
-        "permanent_sources": [],
-        "event_gated_sources": [],
-        "inaccessible_sources": []
-    }
-    
-    # Step 1: Scrape WAPA page
-    candidates = scrape_wapa_page()
-    results["wapa_page_findings"] = candidates
-    
-    # Step 2: Fetch Field59 configs
-    all_candidate_urls = set()
-    
-    for player_ref in candidates["field59_players"]:
-        urls = fetch_field59_config(player_ref)
-        results["field59_configs"][player_ref] = list(urls)
-        all_candidate_urls.update(urls)
-    
-    # Add directly found URLs
-    all_candidate_urls.update(candidates["embedded_urls"])
-    all_candidate_urls.update(candidates["script_configs"])
-    
-    print(f"\n=== STEP 3: Testing all candidate URLs ({len(all_candidate_urls)} total) ===")
-    
-    # Step 3: Check status of all candidate URLs
-    for url in sorted(all_candidate_urls):
-        status_info = check_url_status(url)
-        results["url_status_checks"].append(status_info)
-        
-        if status_info.get("accessible"):
-            if status_info.get("is_token_url"):
-                results["event_gated_sources"].append(url)
+            search_json_recursive(data)
+            
+            # Specific deep inspection for stream/playlist
+            print("\n" + "="*70)
+            print("DEEP DIVE: Stream/Playlist Sources")
+            print("="*70)
+            
+            def find_stream_sources(obj, path=""):
+                """Find actual stream endpoints"""
+                sources = []
+                
+                if isinstance(obj, dict):
+                    # Check for m3u8, hls, stream URLs
+                    for key, value in obj.items():
+                        current_path = f"{path}.{key}" if path else key
+                        
+                        if isinstance(value, str):
+                            if '.m3u8' in value or 'stream' in key.lower() or 'playlist' in key.lower():
+                                sources.append({
+                                    "path": current_path,
+                                    "key": key,
+                                    "value": value,
+                                    "is_m3u8": '.m3u8' in value
+                                })
+                        
+                        sources.extend(find_stream_sources(value, current_path))
+                
+                elif isinstance(obj, list):
+                    for idx, item in enumerate(obj):
+                        current_path = f"{path}[{idx}]"
+                        sources.extend(find_stream_sources(item, current_path))
+                
+                return sources
+            
+            stream_sources = find_stream_sources(data)
+            
+            if stream_sources:
+                print(f"\nFound {len(stream_sources)} stream-related entries:")
+                for source in stream_sources:
+                    print(f"\n  Path: {source['path']}")
+                    print(f"  Key: {source['key']}")
+                    print(f"  Value: {source['value']}")
+                    print(f"  Is M3U8: {source['is_m3u8']}")
             else:
-                results["permanent_sources"].append(url)
-        elif status_info.get("status") == 403:
-            results["event_gated_sources"].append(url)
-        else:
-            results["inaccessible_sources"].append(url)
-    
-    # Summary
-    print("\n" + "="*70)
-    print("INVESTIGATION SUMMARY")
-    print("="*70)
-    print(f"\nTotal candidate URLs found: {len(all_candidate_urls)}")
-    print(f"  - Accessible (200): {len(results['permanent_sources'])}")
-    print(f"  - Event-gated/403: {len(results['event_gated_sources'])}")
-    print(f"  - Inaccessible: {len(results['inaccessible_sources'])}")
-    
-    if results["permanent_sources"]:
-        print("\n✓ PERMANENT STREAM SOURCES FOUND:")
-        for url in results["permanent_sources"]:
-            print(f"  - {url}")
-    else:
-        print("\n✗ NO PERMANENT STREAM SOURCES FOUND")
-        print("  All accessible URLs are event-specific or token-based.")
-    
-    print("\nEvent-gated/403 URLs (require active event):")
-    for url in results["event_gated_sources"][:5]:
-        print(f"  - {url}")
-    if len(results["event_gated_sources"]) > 5:
-        print(f"  ... and {len(results['event_gated_sources']) - 5} more")
-    
-    return results
+                print("\nNo direct M3U8/stream URLs found in JSON structure")
+            
+            # Check for event/schedule information
+            print("\n" + "="*70)
+            print("EVENT/SCHEDULE INFORMATION:")
+            print("="*70)
+            
+            if 'schedule' in data:
+                print(f"Schedule found: {json.dumps(data['schedule'], indent=2)[:1000]}")
+            elif 'event' in data:
+                print(f"Event found: {json.dumps(data['event'], indent=2)[:1000]}")
+            elif 'events' in data:
+                print(f"Events found: {json.dumps(data['events'], indent=2)[:1000]}")
+            else:
+                print("No schedule/event field found")
+            
+        except json.JSONDecodeError as e:
+            print(f"Response is not valid JSON: {e}")
+            print("Attempting regex extraction...")
+            
+            # Regex extraction
+            urls = re.findall(r'https://[^\s"\'<>]+', response.text)
+            if urls:
+                print(f"\nURLs found via regex ({len(urls)} total):")
+                for url in urls[:20]:
+                    print(f"  - {url}")
+        
+        return response.text, response.status_code
+        
+    except Exception as e:
+        print(f"ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, 500
 
 
 @app.route("/")
@@ -304,29 +209,28 @@ def wapa():
 @app.route("/investigate")
 def investigate():
     """
-    Run the full investigation and return results
+    Deep inspection of Field59 channel configuration
     """
-    results = run_investigation()
+    raw_response, status = deep_inspect_field59_config()
     
-    # Format for display
-    output = f"""WAPA/Field59 Stream Investigation Results
-==========================================
+    output = f"""
+FIELD59 CHANNEL CONFIGURATION - DEEP INSPECTION
+================================================
 
-WAPA Page Candidates:
-  Field59 Players: {len(results['wapa_page_findings']['field59_players'])}
-  Embedded URLs: {len(results['wapa_page_findings']['embedded_urls'])}
-  Script URLs: {len(results['wapa_page_findings']['script_configs'])}
+This endpoint examined the complete raw response from:
+https://player.field59.com/v4/channel/wapa/07679d068d54d4a6b52e3a42e27aa151d502b09a
 
-URL Status Summary:
-  Accessible (200): {len(results['permanent_sources'])}
-  Event-gated (403): {len(results['event_gated_sources'])}
-  Inaccessible: {len(results['inaccessible_sources'])}
+See server logs for full details.
 
-Permanent Stream Sources Found: {len(results['permanent_sources']) > 0}
+Key questions answered:
+1. What M3U8 URLs are present? (event-specific vs. channel-level?)
+2. What stream sources exist in the configuration?
+3. Is there schedule/event information indicating current vs. default streams?
+4. What alternate endpoints or fallbacks are available?
 
-Full Results:
-{json.dumps(results, indent=2)}
+Check the application logs for the complete raw response and parsed structure.
 """
+    
     return output, 200
 
 
