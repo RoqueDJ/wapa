@@ -5,6 +5,11 @@ from datetime import datetime, timezone
 
 app = Flask(__name__)
 
+PLAYER_URL = (
+    "https://player.field59.com/v4/channel/wapa/"
+    "07679d068d54d4a6b52e3a42e27aa151d502b09a"
+)
+
 SCHEDULE_URL = (
     "https://player.field59.com/v4/schedule/wapa/"
     "9f91970fb55d5a5b1b18adeaf20fb8fd3f33e565"
@@ -20,19 +25,40 @@ HEADERS = {
 }
 
 
-def get_schedule():
+def get_player_url():
+    response = requests.get(
+        PLAYER_URL,
+        headers=HEADERS,
+        timeout=15
+    )
+    response.raise_for_status()
+
+    match = re.search(
+        r'"m3u8"\s*:\s*"([^"]+\.m3u8)"',
+        response.text
+    )
+
+    if not match:
+        match = re.search(
+            r'"url"\s*:\s*"([^"]+\.m3u8)"',
+            response.text
+        )
+
+    if match:
+        return match.group(1)
+
+    return None
+
+
+def get_scheduled_url():
     response = requests.get(
         SCHEDULE_URL,
         headers=HEADERS,
         timeout=15
     )
     response.raise_for_status()
-    return response.text
 
-
-def get_current_wapa_url():
-    xml = get_schedule()
-
+    xml = response.text
     now = datetime.now(timezone.utc)
 
     instances = re.findall(
@@ -46,7 +72,6 @@ def get_current_wapa_url():
     )
 
     for url, begin, end in instances:
-
         begin_dt = datetime.strptime(
             begin.strip(),
             "%Y-%m-%d %H:%M"
@@ -70,17 +95,20 @@ def home():
 
 @app.route("/WAPA-TV-4-1.m3u8")
 def wapa():
-
     try:
-        current_url = get_current_wapa_url()
+        # First try the live Field59 channel player.
+        player_url = get_player_url()
 
-        if not current_url:
-            return (
-                "WAPA 4.1 is currently between scheduled live events.",
-                503
-            )
+        if player_url:
+            return redirect(player_url, code=302)
 
-        return redirect(current_url, code=302)
+        # If that doesn't provide a stream, try the schedule.
+        scheduled_url = get_scheduled_url()
+
+        if scheduled_url:
+            return redirect(scheduled_url, code=302)
+
+        return "No WAPA 4.1 stream is currently available.", 503
 
     except Exception as e:
         return f"WAPA updater error: {e}", 503
