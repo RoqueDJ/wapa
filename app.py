@@ -1,4 +1,4 @@
-from flask import Flask, redirect
+from flask import Flask
 import requests
 import re
 
@@ -24,27 +24,13 @@ HEADERS = {
 }
 
 
-def test_stream(url):
-    try:
-        r = requests.get(
-            url,
-            headers=HEADERS,
-            timeout=10,
-            stream=True
-        )
-
-        return r.status_code == 200
-
-    except Exception:
-        return False
-
-
 def get_player_url():
     response = requests.get(
         PLAYER_URL,
         headers=HEADERS,
         timeout=15
     )
+
     response.raise_for_status()
 
     match = re.search(
@@ -70,6 +56,7 @@ def get_schedule_urls():
         headers=HEADERS,
         timeout=15
     )
+
     response.raise_for_status()
 
     urls = re.findall(
@@ -90,26 +77,39 @@ def home():
 def wapa():
 
     try:
-        # Try the channel player URL.
+        # Get the current M3U8 URL from the Field59 player.
         player_url = get_player_url()
 
-        if player_url and test_stream(player_url):
-            return redirect(player_url, code=302)
+        if not player_url:
+            return (
+                "Field59 player returned no M3U8 URL.",
+                503
+            )
 
-        # Try URLs listed in the WAPA schedule.
-        schedule_urls = get_schedule_urls()
-
-        for url in schedule_urls:
-            if "/wapa/wapa1/" in url and test_stream(url):
-                return redirect(url, code=302)
+        # Test the URL without following redirects.
+        response = requests.get(
+            player_url,
+            headers=HEADERS,
+            timeout=10,
+            allow_redirects=False
+        )
 
         return (
-            "WAPA 4.1: no currently valid stream was found.",
-            503
+            f"URL:\n"
+            f"{player_url}\n\n"
+            f"HTTP status: {response.status_code}\n\n"
+            f"Headers:\n"
+            f"{dict(response.headers)}\n\n"
+            f"Body:\n"
+            f"{response.text[:1000]}",
+            response.status_code
         )
 
     except Exception as e:
-        return f"WAPA updater error: {e}", 503
+        return (
+            f"ERROR:\n{e}",
+            503
+        )
 
 
 if __name__ == "__main__":
